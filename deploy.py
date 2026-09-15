@@ -80,7 +80,9 @@ class GitDeployment(legacy.Deployment):
         for name in ['compose.yaml','docker/init-app-user.sh','docker/pgadmin-servers.json']:
             target=self.root/name;target.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(self.source/'deploy/linux'/name,target)
-            if os.name!='nt': target.chmod(0o755 if name.endswith('.sh') else 0o600)
+            # Bind-mounted configuration must be readable by the container's UID.
+            # Credentials are separate 0600 files, never stored in these mounts.
+            if os.name!='nt': target.chmod(0o755 if name.endswith('.sh') else 0o644 if name.startswith('docker/') else 0o600)
         self.execute(verify_archive=False,prepare_images=self.prepare_images)
 
     def installed(self):

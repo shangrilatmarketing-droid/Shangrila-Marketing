@@ -105,4 +105,6 @@ Install Node.js 24+ and run `npm ci`. For direct Node execution configure `PGHOS
 
 Run `npm run check` for syntax checks. `npm test` requires `TEST_DATABASE_URL` pointing to a disposable PostgreSQL test database with permission to create test schemas. Each integration test group creates and removes its own uniquely named schema. Never use production admin credentials for routine testing.
 
+Run `python3 -m unittest discover -s tests -p test_deploy.py` for deployment safeguards. The Git install/update workflow was also rehearsed in isolated Docker containers: initial migration, app-only replacement, simulated update failure with rollback, and restoring a PostgreSQL backup. The working app and the test database/pgAdmin containers retained their IDs and start times during app-only updates.
+
 Validation covers API permissions, concurrent registration and ETag saves across two app instances, migration rollback and repeat-import refusal, task order, recurrence, NPR export, uploads, notification claims, and legacy data. A real Docker migration copied all 5 local accounts, 7 plans, and 3 images without modifying the originals. The app role's restricted privileges, pgAdmin's saved database connection, and database backup/restore were verified. The live Linux deployment has not been changed by this local work.

@@ -1,11 +1,12 @@
 """Read-only unit tests for deployment refusal and update rollback boundaries."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 
 SOURCE=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('git_deploy',SOURCE/'deploy.py')
@@ -73,5 +74,28 @@ class DeploymentTests(unittest.TestCase):
             self.app.execute(verify_archive=False,prepare_images=Mock(side_effect=RuntimeError('image build failed')))
         self.app.prepare_backup.assert_not_called()
         self.app.stop_and_snapshot.assert_not_called()
+
+    @unittest.skipUnless(os.name=='posix','Linux file permissions')
+    def test_container_config_is_readable_and_secrets_are_private(self):
+        self.app.check_checkout=Mock()
+        self.app.execute=Mock()
+        self.app.install()
+        self.assertEqual((self.root/'docker/pgadmin-servers.json').stat().st_mode & 0o044,0o044)
+        self.assertEqual((self.root/'docker/init-app-user.sh').stat().st_mode & 0o055,0o055)
+        module.legacy.private_write(self.root/'.app.env','SMTP_PASS=fixture\n')
+        self.assertEqual((self.root/'.app.env').stat().st_mode & 0o777,0o600)
+
+    @unittest.skipUnless(os.name=='posix','Linux deployment lock')
+    def test_concurrent_deployment_is_refused_and_lock_releases(self):
+        with module.deployment_lock(self.root):
+            with self.assertRaisesRegex(RuntimeError,'already running'):
+                with module.deployment_lock(self.root):self.fail('Second deployment obtained the lock')
+        with module.deployment_lock(self.root):pass
+
+    def test_dirty_git_checkout_is_refused(self):
+        def git_result(args,**kwargs):
+            return SimpleNamespace(stdout=' M server.js' if args[1]=='status' else 'a'*40)
+        with patch.object(module.subprocess,'run',side_effect=git_result):
+            with self.assertRaisesRegex(RuntimeError,'checkout has local changes'):self.app.check_checkout()
 
 if __name__=='__main__':unittest.main()
