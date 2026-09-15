@@ -64,15 +64,15 @@ Tables include `users`, `plans`, `company_budgets`, `plan_uploads`, `email_diges
 
 The application connects as `plan_reminder_app`, a role without superuser, role-creation, or database-creation privileges. It owns the app's tables and can apply its schema migrations. See [pgAdmin container setup](https://www.pgadmin.org/docs/pgadmin4/9.17/container_deployment.html).
 
-## Transfer to the Linux server
+## Deploy on Linux using Git
 
-Use the prepared **single-file Linux installer**, `plan-reminder-linux.tar`, in the task's `outputs/linux-deployment` folder. Follow [START-HERE.md](deploy/linux/START-HERE.md) for the Windows upload command and Cockpit installation command. It replaces the earlier manual migration procedure.
+Use the [Git deployment guide](deploy/GIT-DEPLOYMENT.md). On the server, clone this repository into a new directory, then run `python3 deploy.py install`. The command builds the images, verifies and backs up the known old planner, replaces only its container, migrates its data into PostgreSQL, and checks health. No archive upload from Windows is needed.
 
-The installer validates the known `shangrila-marketing-tracker-v2` container and its four data mounts, saves its image and configuration, stops only that container, verifies a final data backup, and removes that exact container ID. It then starts the isolated `plan-reminder-postgres` stack on port 3005, imports the server's existing data, verifies health, and compares other running containers' IDs and start times. If installation fails after removal, it attempts to recreate the old planner from the saved settings and original bind mounts.
+After installation, use `git pull --ff-only && python3 deploy.py update` from the checkout. Updates build a new app image, verify a database backup, and replace only the app while retaining the database and pgAdmin containers. A failed app update attempts to restore the previous image. Schema changes require a separately reviewed database upgrade.
 
-The archive includes the app and dedicated aliases of the PostgreSQL/pgAdmin images. It requires no image download on the server and contains no passwords or user data. New credentials are generated privately on Linux. Existing JSON files and uploads remain untouched. pgAdmin uses server localhost 5052, accessed from Windows through an SSH tunnel at localhost 15052; PostgreSQL has no published host port.
+Generated settings, state, credentials, and backups stay in the Git-ignored `deploy/runtime/` directory. PostgreSQL has no host port; pgAdmin uses localhost 5052 on the server. The app continues to use host port 3005. `python3 deploy.py status` shows deployment state and `python3 deploy.py backup` creates a verified PostgreSQL backup.
 
-The Linux installer uses `compose.yaml`, `.env.postgres` for generated infrastructure settings, and `.app.env` in raw format for application settings, preserving special characters in existing SMTP passwords. Use the commands in its guide for future updates. The root development Compose file continues to use the setup described above.
+The root Compose file is for local/manual development. The Git installer uses its saved `deploy/runtime/compose.yaml` configuration so a Git pull cannot overwrite production secrets or recreate infrastructure automatically. The older archive-based installer remains available under `deploy/linux` for historical packages.
 
 ## HTTPS and email
 

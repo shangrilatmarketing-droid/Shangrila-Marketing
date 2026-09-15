@@ -21,7 +21,7 @@ services:
       driver: json-file
       options: {max-size: 10m, max-file: "3"}
   app:
-    image: plan-reminder:2026-09-15-postgres
+    image: ${APP_IMAGE:-plan-reminder:2026-09-15-postgres}
     pull_policy: never
     restart: unless-stopped
     init: true
@@ -56,7 +56,7 @@ services:
       - ./docker/pgadmin-servers.json:/pgadmin4/servers.json:ro
     logging: *logging
   migrate-json:
-    image: plan-reminder:2026-09-15-postgres
+    image: ${APP_IMAGE:-plan-reminder:2026-09-15-postgres}
     pull_policy: never
     profiles: [migration]
     user: root

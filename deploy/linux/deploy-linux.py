@@ -99,9 +99,12 @@ class Deployment:
         self.state_path=self.root/'deployment-state.json'
         self.old=None; self.old_stopped=False; self.old_removed=False; self.new_started=False
         self.backup=None; self.settings={}; self.runtime={}; self.unrelated={}
+        self.app_image=APP_IMAGE
 
     def docker(self,*args,check=True):
-        result=subprocess.run(['docker',*map(str,args)],cwd=self.root,text=True,encoding='utf-8',errors='replace',capture_output=True)
+        environment=os.environ.copy()
+        if args and args[0]=='compose': environment.update(self.settings)
+        result=subprocess.run(['docker',*map(str,args)],cwd=self.root,env=environment,text=True,encoding='utf-8',errors='replace',capture_output=True)
         if check and result.returncode:
             # Do not echo command arguments or resolved Compose configuration (secrets).
             raise RuntimeError('Docker operation failed: '+str(args[0])+'. '+result.stderr.strip()[-1800:])
@@ -130,7 +133,7 @@ class Deployment:
         ids=self.docker('ps','-q','--no-trunc').stdout.split()
         result={}
         for identifier in ids:
-            if identifier==self.old['Id']: continue
+            if self.old and identifier==self.old['Id']: continue
             state=json.loads(self.docker('inspect','--format','{{json .State}}',identifier).stdout)
             result[identifier]={'started_at':state['StartedAt'],'running':state['Running']}
         return result
@@ -188,7 +191,7 @@ class Deployment:
         if copied.returncode==0:
             if os.name!='nt': (self.backup/'legacy.env').chmod(0o600)
             code="process.stdout.write(JSON.stringify(require('dotenv').parse(require('fs').readFileSync('/snapshot/legacy.env'))))"
-            parsed=self.docker('run','--rm','--read-only','--network','none','--user','0','--mount','type=bind,source='+str(self.backup)+',target=/snapshot,readonly','--entrypoint','node',APP_IMAGE,'-e',code)
+            parsed=self.docker('run','--rm','--read-only','--network','none','--user','0','--mount','type=bind,source='+str(self.backup)+',target=/snapshot,readonly','--entrypoint','node',self.app_image,'-e',code)
             dotenv=json.loads(parsed.stdout)
         combined={**dotenv,**env}
         private_write(self.backup/'legacy-runtime.env',raw_env(combined))
@@ -197,6 +200,7 @@ class Deployment:
     def prepare_settings(self,legacy):
         self.settings={'APP_PORT':str(self.target.app_port),'BIND_ADDRESS':'0.0.0.0','PGADMIN_PORT':str(self.target.pgadmin_port),'PGADMIN_EMAIL':'admin@example.com',
             'POSTGRES_ADMIN_PASSWORD':secrets.token_hex(48),'APP_DB_PASSWORD':secrets.token_hex(48),'PGADMIN_PASSWORD':secrets.token_hex(48),'MIGRATION_DIR':'./'+str(self.backup.relative_to(self.root)).replace('\\','/')+'/snapshot'}
+        self.settings['APP_IMAGE']=self.app_image
         jwt=legacy.get('JWT_SECRET','')
         if len(jwt)<32 or jwt=='super_secret_shangrila_key_123': jwt=secrets.token_hex(48)
         selected=['SMTP_HOST','SMTP_PORT','SMTP_SECURE','SMTP_USER','SMTP_PASS','SMTP_FROM','PUBLIC_URL','TRUST_PROXY','COOKIE_SECURE']
@@ -219,7 +223,7 @@ class Deployment:
         for name in ['users.json','database.json','budget.json','uploads']:
             self.docker('cp',self.old['Id']+':/app/'+name,snapshot/name)
         self.docker('cp',self.old['Id']+':/app/reminders.json',snapshot/'reminders.json',check=False)
-        checked=self.docker('run','--rm','--read-only','--network','none','--user','0','--cap-drop','ALL','--cap-add','DAC_OVERRIDE','--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly','--entrypoint','node',APP_IMAGE,'scripts/import-json.js','/migration','--check')
+        checked=self.docker('run','--rm','--read-only','--network','none','--user','0','--cap-drop','ALL','--cap-add','DAC_OVERRIDE','--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly','--entrypoint','node',self.app_image,'scripts/import-json.js','/migration','--check')
         counts=json.loads(checked.stdout.strip().splitlines()[-1])
         manifest={str(p.relative_to(snapshot)).replace('\\','/'):file_hash(p) for p in snapshot.rglob('*') if p.is_file()}
         private_write(self.backup/'snapshot-sha256.json',json.dumps(manifest,indent=2)+'\n')
@@ -284,10 +288,11 @@ class Deployment:
         elif self.old_stopped:
             self.docker('start',self.old['Id']); print('The old planner has been restarted.',flush=True)
 
-    def execute(self,verify_archive=True):
+    def execute(self,verify_archive=True,prepare_images=None):
         print('1/6 Checking the package, ports and exact planner identity.',flush=True)
         manifest=self.verify_package() if verify_archive else None
         self.preflight()
+        if prepare_images: prepare_images()
         if manifest:
             print('Loading the three planner-specific images. Other running containers are not restarted.',flush=True)
             self.docker('image','load','--input',self.root/'images.tar')
