@@ -1,0 +1,36 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/
+uploads/
+database.json
+users.json
+budget.json
+reminders.json
+*.bak
+*.tmp
+*.log
+work/
+coverage/
+
+# Private runtime and deployment state
+*.env
+ACCESS.txt
+deployment-state.json
+backups/
+rollback/
+migration/
+
+# Generated packages, database dumps, and Python caches
+outputs/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.dump
+*.sql
+!migrations/*.sql
+__pycache__/
+*.py[cod]
+.venv/

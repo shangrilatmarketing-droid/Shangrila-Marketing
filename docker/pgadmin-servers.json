@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Plan Reminder",
+      "Group": "Shangrila Tours",
+      "Host": "db",
+      "Port": 5432,
+      "MaintenanceDB": "plan_reminder",
+      "Username": "plan_reminder_app",
+      "SSLMode": "prefer"
+    }
+  }
+}

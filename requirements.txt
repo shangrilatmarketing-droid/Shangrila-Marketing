@@ -1,0 +1,3 @@
+# The former Flask backend has been retired.
+# The compatibility launcher server.py uses only the Python standard library.
+# Install Node.js 24+ and run npm ci, or deploy with Docker Compose.
