@@ -41,6 +41,8 @@ services:
       options: {max-size: 10m, max-file: "3"}
   app:
     image: plan-reminder:2026-09-15-postgres
+    entrypoint: [/usr/local/bin/node]
+    command: [server.js]
     build: .
     restart: unless-stopped
     init: true
@@ -78,7 +80,8 @@ services:
     depends_on:
       db: {condition: service_healthy}
     environment: *app-environment
-    command: [node, scripts/import-json.js, /migration]
+    entrypoint: [/usr/local/bin/node]
+    command: [scripts/import-json.js, /migration]
     volumes:
       - ${MIGRATION_DIR:-./migration}:/migration:ro
     read_only: true

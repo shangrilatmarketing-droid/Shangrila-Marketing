@@ -72,6 +72,8 @@ After installation, use `git pull --ff-only && python3 deploy.py update` from th
 
 Generated settings, state, credentials, and backups stay in the Git-ignored `deploy/runtime/` directory. PostgreSQL has no host port; pgAdmin uses localhost 5052 on the server. The app continues to use host port 3005. `python3 deploy.py status` shows deployment state and `python3 deploy.py backup` creates a verified PostgreSQL backup.
 
+For a failed initial migration that explicitly restored the old planner, pull the correction and run `python3 deploy.py recover`. Recovery reuses the empty database volumes and private credentials, rejects populated or unexpected destinations, validates direct executable startup before downtime, and creates a new snapshot from the restored planner. See the linked guide for the exact guarded recovery procedure.
+
 The root Compose file is for local/manual development. The Git installer uses its saved `deploy/runtime/compose.yaml` configuration so a Git pull cannot overwrite production secrets or recreate infrastructure automatically. The older archive-based installer remains available under `deploy/linux` for historical packages.
 
 ## HTTPS and email

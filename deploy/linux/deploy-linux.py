@@ -149,9 +149,9 @@ class Deployment:
         else: print('Verified: all '+str(len(self.unrelated))+' other running containers kept their IDs and start times.',flush=True)
         return changed
 
-    def preflight(self):
-        if self.state_path.exists(): raise RuntimeError('This deployment directory already has a state file. Use --status; do not overwrite an earlier migration.')
-        if (self.root/'.env.postgres').exists() or (self.root/'.app.env').exists(): raise RuntimeError('This directory already has settings. Use a fresh deployment directory or review it before continuing.')
+    def preflight(self,recovery=False):
+        if not recovery and self.state_path.exists(): raise RuntimeError('This deployment directory already has a state file. Use --status; do not overwrite an earlier migration.')
+        if not recovery and ((self.root/'.env.postgres').exists() or (self.root/'.app.env').exists()): raise RuntimeError('This directory already has settings. Use a fresh deployment directory or review it before continuing.')
         self.docker('version','--format','{{.Server.Version}}')
         compose_version=self.docker('compose','version','--short').stdout.strip().lstrip('v')
         match=re.match(r'(\d+)\.(\d+)',compose_version)
@@ -168,6 +168,9 @@ class Deployment:
         for source,destination in expected.items():
             if actual.get(source.replace('\\','/'))!=destination: raise RuntimeError('Legacy data mounts do not match the inspected deployment.')
         restore_arguments(self.old,self.root/'unused.env') # Ensure rollback is representable before removal.
+        if recovery:
+            self.unrelated=self.snapshot_unrelated()
+            return
         for kind in ['container','volume','network']:
             args=[kind,'ls','-q']+(['-a'] if kind=='container' else [])+['--filter','label=com.docker.compose.project='+self.target.project]
             if self.docker(*args).stdout.strip(): raise RuntimeError('The new project already has '+kind+' resources. Existing PostgreSQL data will not be overwritten.')

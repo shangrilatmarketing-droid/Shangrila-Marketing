@@ -65,6 +65,75 @@ class GitDeployment(legacy.Deployment):
         self.app_image='plan-reminder:git-'+self.revision[:12]+'-'+secrets.token_hex(4)
         print('Building the application image from this Git checkout. The current app stays running.',flush=True)
         self.docker('build','--platform','linux/amd64','--tag',self.app_image,self.source)
+        self.check_image_execution()
+
+    def check_image_execution(self):
+        for user,extra in [('node',[]),('root',['--cap-add','DAC_OVERRIDE'])]:
+            self.docker('run','--rm','--network','none','--read-only','--user',user,'--cap-drop','ALL',*extra,'--security-opt','no-new-privileges:true','--entrypoint','/usr/local/bin/node',self.app_image,'-e','process.stdout.write("runtime-ok")')
+        print('Verified application and migration executable permissions before stopping the old app.',flush=True)
+
+    def require_empty_database(self,identifier):
+        def sql(query):
+            return self.docker('exec',identifier,'psql','-U','postgres','-d','plan_reminder','-tA','-v','ON_ERROR_STOP=1','-c',query).stdout.strip()
+        tables=json.loads(sql("SELECT COALESCE(json_agg(t),'[]'::json) FROM (SELECT schemaname,tablename FROM pg_tables WHERE schemaname NOT LIKE 'pg_%' AND schemaname <> 'information_schema') t"))
+        allowed={'schema_migrations','users','plans','company_budgets','plan_uploads','email_digest_deliveries','data_imports'}
+        for table in tables:
+            name=table['tablename']
+            if table['schemaname']!='public' or name not in allowed:
+                raise RuntimeError('Unexpected tables in the destination. Recovery will not overwrite this database.')
+            if name!='schema_migrations' and int(sql('SELECT count(*) FROM public."'+name+'"')):
+                raise RuntimeError('The destination already contains data. Recovery will not overwrite it.')
+
+    def recover(self):
+        self.check_checkout()
+        state=json.loads(self.state_path.read_text(encoding='utf-8'))
+        if state.get('phase')!='failed' or state.get('project')!=self.target.project or state.get('old_container')!=self.target.old:
+            raise RuntimeError('Recovery is only for this planner\'s failed initial installation.')
+        self.settings=read_env(self.root/'.env.postgres')
+        self.runtime=read_env(self.root/'.app.env')
+        if self.settings.get('APP_PORT')!=str(self.target.app_port) or self.settings.get('PGADMIN_PORT')!=str(self.target.pgadmin_port):
+            raise RuntimeError('Unexpected recovery ports; no containers were stopped.')
+        self.preflight(recovery=True)
+        if not self.old['State']['Running']: raise RuntimeError('The restored old planner must be running before recovery.')
+        for service in ['db','pgadmin','app']:
+            identifier=self.compose('ps','--all','-q',service).stdout.strip()
+            if not identifier and service=='app': continue
+            if not identifier or len(identifier.splitlines())!=1: raise RuntimeError('Expected one recovery container for '+service)
+            info=self.inspect(identifier); labels=info['Config'].get('Labels') or {}
+            if labels.get('com.docker.compose.project')!=self.target.project or labels.get('com.docker.compose.service')!=service or labels.get('com.docker.compose.project.working_dir','').replace('\\','/')!=self.root.as_posix():
+                raise RuntimeError('Recovery container ownership does not match this checkout.')
+            if service=='app' and info['State']['Running']: raise RuntimeError('A new app is already running; recovery will not replace it.')
+            if service in ['db','pgadmin'] and not info['State']['Running']: raise RuntimeError(service+' must be running before this recovery.')
+            if service=='db': self.require_empty_database(identifier)
+        print('Destination is empty. Existing database credentials, volumes and earlier backups will be retained.',flush=True)
+        self.build_application()
+        self.new_started=True
+        try:
+            original=self.prepare_backup()
+            legacy.private_write(self.backup/'previous-deployment-state.json',json.dumps(state,indent=2)+'\n')
+            self.settings.update(APP_IMAGE=self.app_image,MIGRATION_DIR='./'+self.backup.relative_to(self.root).as_posix()+'/snapshot')
+            self.resume_scheduler=original.get('DISABLE_SCHEDULER','false')
+            self.runtime['DISABLE_SCHEDULER']='true'
+            for key in ['SMTP_HOST','SMTP_PORT','SMTP_SECURE','SMTP_USER','SMTP_PASS','SMTP_FROM','PUBLIC_URL','TRUST_PROXY','COOKIE_SECURE']:
+                if key in original:self.runtime[key]=original[key]
+            legacy.private_write(self.root/'.env.postgres',legacy.raw_env(self.settings))
+            legacy.private_write(self.root/'.app.env',legacy.raw_env(self.runtime))
+            shutil.copyfile(self.source/'deploy/linux/compose.yaml',self.root/'compose.yaml')
+            self.compose('config','--quiet')
+            counts=self.stop_and_snapshot()
+            self.remove_old()
+            self.import_data(counts)
+            self.start_app()
+            changed=self.verify_unrelated()
+            legacy.private_write(self.root/'ACCESS.txt','Planner port: '+str(self.target.app_port)+'\npgAdmin email: '+self.settings['PGADMIN_EMAIL']+'\npgAdmin password: '+self.settings['PGADMIN_PASSWORD']+'\nDatabase connection password (APP_DB_PASSWORD): '+self.settings['APP_DB_PASSWORD']+'\n')
+            self.record('complete',counts=counts,other_containers_changed=changed)
+            print('DONE. Recovery completed using a fresh snapshot of the server\'s current data.',flush=True)
+        except BaseException as error:
+            try:self.rollback()
+            except Exception as restore_error:print('Automatic rollback needs attention: '+str(restore_error),file=sys.stderr)
+            self.record('failed',error=str(error))
+            self.verify_unrelated()
+            raise
 
     def prepare_images(self):
         self.build_application()
@@ -174,7 +243,7 @@ class GitDeployment(legacy.Deployment):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=['install','update','status','backup'],nargs='?',default='install')
+    parser.add_argument('action',choices=['install','update','recover','status','backup'],nargs='?',default='install')
     args=parser.parse_args()
     if args.action=='status':
         state=SOURCE/'deploy/runtime/deployment-state.json'
@@ -188,6 +257,7 @@ def main():
     with deployment_lock(deployment.root):
         if args.action=='install': deployment.install()
         elif args.action=='update': deployment.update()
+        elif args.action=='recover': deployment.recover()
         else:
             deployment.installed()
             deployment.backup_database()

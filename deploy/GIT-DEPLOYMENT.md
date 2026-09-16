@@ -34,6 +34,20 @@ All generated settings and backups are in **`deploy/runtime/`**, which Git ignor
 
 If `install` reports an existing deployment or another error, keep the directory and share the error text. Do not remove the state/settings files and rerun an import into an existing database. Use `status` to inspect progress. A hard interruption, server shutdown, or failed automatic rollback needs review before retrying.
 
+### Recover the September 15 importer startup failure
+
+If the first installation reported `docker-entrypoint.sh: operation not permitted` and said the old planner was recreated, update the checkout and use the guarded recovery command:
+
+```bash
+cd ~/Shangrila-Marketing &&
+git pull --ff-only &&
+python3 deploy.py recover
+```
+
+Recovery retains the previously created empty PostgreSQL and pgAdmin volumes and their passwords. Before stopping the restored old planner, it verifies the exact old container and mounts, confirms the destination database contains no imported business data, builds the corrected image, and proves that both restricted app execution modes can start. It then takes a **new final snapshot** from the currently running old planner, imports it, and checks health. It refuses recovery when it sees unexpected tables/data, changed ports, an unrecognized container, or a completed installation.
+
+Do not delete `deploy/runtime`, its backups, or the `plan-reminder-postgres` volumes before recovery. If the old planner cannot currently save, avoid creating or editing tasks until recovery finishes so the verified snapshot remains consistent.
+
 ## Future updates after Git pull
 
 ```bash

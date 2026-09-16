@@ -22,6 +22,8 @@ services:
       options: {max-size: 10m, max-file: "3"}
   app:
     image: ${APP_IMAGE:-plan-reminder:2026-09-15-postgres}
+    entrypoint: [/usr/local/bin/node]
+    command: [server.js]
     pull_policy: never
     restart: unless-stopped
     init: true
@@ -65,7 +67,8 @@ services:
     env_file:
       - path: .app.env
         format: raw
-    command: [node, scripts/import-json.js, /migration]
+    entrypoint: [/usr/local/bin/node]
+    command: [scripts/import-json.js, /migration]
     volumes:
       - ${MIGRATION_DIR:?Missing migration snapshot}:/migration:ro
     read_only: true

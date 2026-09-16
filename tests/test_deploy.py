@@ -98,4 +98,59 @@ class DeploymentTests(unittest.TestCase):
         with patch.object(module.subprocess,'run',side_effect=git_result):
             with self.assertRaisesRegex(RuntimeError,'checkout has local changes'):self.app.check_checkout()
 
+    def test_recovery_refuses_nonempty_database(self):
+        results=iter([
+            SimpleNamespace(stdout='[{"schemaname":"public","tablename":"users"}]\n'),
+            SimpleNamespace(stdout='1\n')
+        ])
+        self.app.docker=Mock(side_effect=lambda *args,**kwargs:next(results))
+        with self.assertRaisesRegex(RuntimeError,'already contains data'):
+            self.app.require_empty_database('fixture-db')
+
+    def test_recovery_reuses_settings_and_takes_fresh_snapshot(self):
+        state={'phase':'failed','project':self.app.target.project,'old_container':self.app.target.old}
+        module.legacy.private_write(self.app.state_path,json.dumps(state))
+        module.legacy.private_write(self.root/'.env.postgres',module.legacy.raw_env({
+            'APP_PORT':'3005','PGADMIN_PORT':'5052','PGADMIN_EMAIL':'admin@example.com',
+            'PGADMIN_PASSWORD':'pgadmin-password','APP_DB_PASSWORD':'database-password',
+            'POSTGRES_ADMIN_PASSWORD':'administrator-password','APP_IMAGE':'old-image','MIGRATION_DIR':'old-snapshot'}))
+        module.legacy.private_write(self.root/'.app.env',module.legacy.raw_env({
+            'PORT':'3005','PGPASSWORD':'database-password','JWT_SECRET':'a'*64,'DISABLE_SCHEDULER':'false'}))
+        old={'Id':'old-id','State':{'Running':True}}
+        self.app.check_checkout=Mock()
+        self.app.preflight=Mock(side_effect=lambda recovery=False:setattr(self.app,'old',old))
+        self.app.compose=Mock(side_effect=lambda *args,**kwargs:SimpleNamespace(stdout={
+            ('ps','--all','-q','db'):'db-id',('ps','--all','-q','pgadmin'):'pgadmin-id',
+            ('ps','--all','-q','app'):''}.get(args,'')))
+        def inspect(identifier,optional=False):
+            if identifier in ['db-id','pgadmin-id']:
+                service='db' if identifier=='db-id' else 'pgadmin'
+                return {'State':{'Running':True},'Config':{'Labels':{
+                    'com.docker.compose.project':self.app.target.project,
+                    'com.docker.compose.service':service,
+                    'com.docker.compose.project.working_dir':self.root.as_posix()}}}
+            return None
+        self.app.inspect=Mock(side_effect=inspect)
+        self.app.require_empty_database=Mock()
+        self.app.build_application=Mock(side_effect=lambda:setattr(self.app,'app_image','new-image'))
+        backup=self.root/'backups/fresh';backup.mkdir(parents=True)
+        self.app.prepare_backup=Mock(return_value={'DISABLE_SCHEDULER':'false','SMTP_PASS':'literal$#password'})
+        self.app.backup=backup
+        self.app.stop_and_snapshot=Mock(return_value={'users':7,'plans':11,'uploads':3})
+        self.app.remove_old=Mock()
+        self.app.import_data=Mock()
+        self.app.start_app=Mock()
+        self.app.verify_unrelated=Mock(return_value=[])
+        self.app.recover()
+        self.app.preflight.assert_called_once_with(recovery=True)
+        self.app.require_empty_database.assert_called_once_with('db-id')
+        self.app.stop_and_snapshot.assert_called_once()
+        self.app.import_data.assert_called_once_with({'users':7,'plans':11,'uploads':3})
+        result=json.loads(self.app.state_path.read_text())
+        self.assertEqual(result['phase'],'complete')
+        self.assertEqual(result['counts'],{'users':7,'plans':11,'uploads':3})
+        settings=module.read_env(self.root/'.env.postgres')
+        self.assertEqual(settings['APP_IMAGE'],'new-image')
+        self.assertEqual(module.read_env(self.root/'.app.env')['SMTP_PASS'],'literal$#password')
+
 if __name__=='__main__':unittest.main()
