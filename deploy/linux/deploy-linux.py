@@ -226,7 +226,7 @@ class Deployment:
         for name in ['users.json','database.json','budget.json','uploads']:
             self.docker('cp',self.old['Id']+':/app/'+name,snapshot/name)
         self.docker('cp',self.old['Id']+':/app/reminders.json',snapshot/'reminders.json',check=False)
-        checked=self.docker('run','--rm','--read-only','--network','none','--user','0','--cap-drop','ALL','--cap-add','DAC_OVERRIDE','--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly','--entrypoint','node',self.app_image,'scripts/import-json.js','/migration','--check')
+        checked=self.docker('run','--rm','--read-only','--network','none','--user','node','--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly','--entrypoint','/usr/local/bin/node',self.app_image,'scripts/import-json.js','/migration','--check')
         counts=json.loads(checked.stdout.strip().splitlines()[-1])
         manifest={str(p.relative_to(snapshot)).replace('\\','/'):file_hash(p) for p in snapshot.rglob('*') if p.is_file()}
         private_write(self.backup/'snapshot-sha256.json',json.dumps(manifest,indent=2)+'\n')

@@ -61,6 +61,17 @@ class GitDeployment(legacy.Deployment):
     def compose_arguments(self,*args):
         return ['docker','compose','--env-file',str(self.root/'.env.postgres'),'-p',self.target.project,'-f',str(self.root/'compose.yaml'),*args]
 
+    def stage_compose(self):
+        candidate=self.root/'compose.next.yaml'
+        shutil.copyfile(self.source/'deploy/linux/compose.yaml',candidate)
+        try:
+            subprocess.run(['docker','compose','--env-file',str(self.root/'.env.postgres'),
+                '-p',self.target.project,'-f',str(candidate),'config','--quiet'],
+                cwd=self.root,capture_output=True,text=True,check=True)
+            os.replace(candidate,self.root/'compose.yaml')
+        finally:
+            candidate.unlink(missing_ok=True)
+
     def build_application(self):
         self.app_image='plan-reminder:git-'+self.revision[:12]+'-'+secrets.token_hex(4)
         print('Building the application image from this Git checkout. The current app stays running.',flush=True)
@@ -68,8 +79,8 @@ class GitDeployment(legacy.Deployment):
         self.check_image_execution()
 
     def check_image_execution(self):
-        for user,extra in [('node',[]),('root',['--cap-add','DAC_OVERRIDE'])]:
-            self.docker('run','--rm','--network','none','--read-only','--user',user,'--cap-drop','ALL',*extra,'--security-opt','no-new-privileges:true','--entrypoint','/usr/local/bin/node',self.app_image,'-e','process.stdout.write("runtime-ok")')
+        self.docker('run','--rm','--network','none','--read-only','--user','node',
+            '--entrypoint','/usr/local/bin/node',self.app_image,'-e','process.stdout.write("runtime-ok")')
         print('Verified application and migration executable permissions before stopping the old app.',flush=True)
 
     def require_empty_database(self,identifier):
@@ -160,8 +171,8 @@ class GitDeployment(legacy.Deployment):
 
     def run_merge(self,snapshot,apply=False):
         args=['run','--rm','--network',self.merge_network(),'--env-file',self.root/'.app.env',
-            '--user','root','--read-only','--cap-drop','ALL','--cap-add','DAC_OVERRIDE',
-            '--security-opt','no-new-privileges:true','--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly',
+            '--user','node','--read-only',
+            '--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly',
             '--entrypoint','/usr/local/bin/node',self.app_image,'scripts/merge-json.js','/migration']
         if apply: args.append('--apply')
         result=self.docker(*args)
@@ -188,6 +199,7 @@ class GitDeployment(legacy.Deployment):
         preview=self.run_merge(snapshot,False)
         print('Verified merge preview: '+json.dumps(preview,separators=(',',':')),flush=True)
         backup=self.backup_database(save_image=True)
+        self.stage_compose()
         old_settings=(self.root/'.env.postgres').read_text(encoding='utf-8')
         previous=dict(state); merged=False
         try:
@@ -297,6 +309,7 @@ class GitDeployment(legacy.Deployment):
         self.check_schema()
         self.build_application()
         backup=self.backup_database(save_image=True)
+        self.stage_compose()
         old_settings=(self.root/'.env.postgres').read_text(encoding='utf-8')
         previous=dict(state)
         try:

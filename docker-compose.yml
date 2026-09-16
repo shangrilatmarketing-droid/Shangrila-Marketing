@@ -54,8 +54,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
     stop_grace_period: 15s
     logging: *logging
   pgadmin:
@@ -76,7 +74,7 @@ services:
   migrate-json:
     image: plan-reminder:2026-09-15-postgres
     profiles: [migration]
-    user: root
+    user: node
     depends_on:
       db: {condition: service_healthy}
     environment: *app-environment
@@ -85,9 +83,6 @@ services:
     volumes:
       - ${MIGRATION_DIR:-./migration}:/migration:ro
     read_only: true
-    cap_drop: [ALL]
-    cap_add: [DAC_OVERRIDE]
-    security_opt: [no-new-privileges:true]
 volumes:
   postgres-data:
   pgadmin-data:

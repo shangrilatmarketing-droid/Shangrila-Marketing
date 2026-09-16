@@ -37,6 +37,38 @@ class DeploymentTests(unittest.TestCase):
         self.app.docker=Mock(return_value=SimpleNamespace(stdout='{}'))
         with self.assertRaisesRegex(RuntimeError,'Database migrations changed'):self.app.check_schema()
 
+    def test_image_check_uses_server_compatible_direct_node_execution(self):
+        self.app.app_image='fixture-image'
+        self.app.docker=Mock(return_value=SimpleNamespace(stdout='runtime-ok'))
+        self.app.check_image_execution()
+        args=self.app.docker.call_args.args
+        self.assertIn('/usr/local/bin/node',args)
+        self.assertIn('node',args)
+        self.assertNotIn('--cap-drop',args)
+        self.assertNotIn('--security-opt',args)
+
+    def test_compose_refresh_is_validated_before_it_becomes_active(self):
+        old=self.root/'compose.yaml';old.write_text('old',encoding='utf-8')
+        module.legacy.private_write(self.root/'.env.postgres','APP_IMAGE=fixture\n')
+        with patch.object(module.subprocess,'run',return_value=SimpleNamespace(stdout='')) as run:
+            self.app.stage_compose()
+        self.assertEqual(old.read_bytes(),(SOURCE/'deploy/linux/compose.yaml').read_bytes())
+        self.assertFalse((self.root/'compose.next.yaml').exists())
+        self.assertIn(str(self.root/'compose.next.yaml'),run.call_args.args[0])
+        self.assertEqual(run.call_args.args[0][-2:],['config','--quiet'])
+
+    def test_merge_uses_server_compatible_unprivileged_node_execution(self):
+        self.app.app_image='fixture-image';self.app.runtime={}
+        self.app.old={'NetworkSettings':{'Networks':{'fixture-network':{}}}}
+        self.app.inspect=Mock(return_value={'Labels':{'com.docker.compose.project':self.app.target.project}})
+        self.app.docker=Mock(return_value=SimpleNamespace(stdout='Merge preview: {"final":{"users":1}}\n'))
+        self.app.run_merge(self.root/'snapshot')
+        args=self.app.docker.call_args.args
+        self.assertIn('/usr/local/bin/node',args)
+        self.assertEqual(args[args.index('--user')+1],'node')
+        self.assertNotIn('--cap-drop',args)
+        self.assertNotIn('--security-opt',args)
+
     def test_failed_update_restores_previous_settings_and_state(self):
         state={'phase':'complete','project':self.app.target.project,'revision':'old','app_image':'old-image'}
         original='APP_IMAGE=old-image\nAPP_PORT=3005\n'
@@ -47,6 +79,7 @@ class DeploymentTests(unittest.TestCase):
         self.app.check_schema=Mock()
         self.app.build_application=Mock(side_effect=lambda:setattr(self.app,'app_image','new-image'))
         self.app.backup_database=Mock(return_value=self.root/'backup')
+        self.app.stage_compose=Mock()
         self.app.replace_app=Mock(side_effect=[RuntimeError('fixture startup failure'),None])
         self.app.verify_unrelated=Mock(return_value=[])
         with self.assertRaisesRegex(RuntimeError,'fixture startup failure'):self.app.update()
@@ -61,8 +94,10 @@ class DeploymentTests(unittest.TestCase):
         self.app.check_schema=Mock()
         self.app.build_application=Mock()
         self.app.backup_database=Mock(side_effect=RuntimeError('backup failed'))
+        self.app.stage_compose=Mock()
         self.app.replace_app=Mock()
         with self.assertRaisesRegex(RuntimeError,'backup failed'):self.app.update()
+        self.app.stage_compose.assert_not_called()
         self.app.replace_app.assert_not_called()
         self.assertFalse(self.app.state_path.exists())
 
@@ -172,11 +207,12 @@ class DeploymentTests(unittest.TestCase):
         self.app.build_application=Mock(side_effect=lambda:(events.append('build'),setattr(self.app,'app_image','new-image')))
         self.app.run_merge=Mock(side_effect=lambda snapshot,apply=False:(events.append('merge' if apply else 'preview') or preview))
         self.app.backup_database=Mock(side_effect=lambda save_image=False:(events.append('backup') or self.root/'postgres-backup'))
+        self.app.stage_compose=Mock(side_effect=lambda:events.append('compose'))
         self.app.verify_merge_counts=Mock(side_effect=lambda summary:events.append('verify'))
         self.app.replace_app=Mock(side_effect=lambda:events.append('replace'))
         self.app.verify_unrelated=Mock(return_value=[])
         self.app.restore_legacy('fixture')
-        self.assertEqual(events,['build','preview','backup','merge','verify','replace'])
+        self.assertEqual(events,['build','preview','backup','compose','merge','verify','replace'])
         self.assertEqual(json.loads(self.app.state_path.read_text())['legacy_restore'],preview)
         self.assertEqual(module.read_env(self.root/'.env.postgres')['APP_IMAGE'],'new-image')
 
