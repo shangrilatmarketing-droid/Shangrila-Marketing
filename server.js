@@ -246,9 +246,9 @@ async function createApplication(options = {}) {
         res.json({success:true});
     }));
     for (const name of ['index.html','login.html','register.html','styles.css','app.js','auth.js','ui.js','logo.png']) {
-        app.get('/' + name, (req, res) => res.sendFile(path.join(__dirname, name)));
+        app.get('/' + name, (req, res) => res.set('Cache-Control','no-cache').sendFile(path.join(__dirname, name)));
     }
-    app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+    app.get('/', (req, res) => res.set('Cache-Control','no-cache').sendFile(path.join(__dirname, 'index.html')));
     app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'logo.png')));
     app.get('/vendor/lucide.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules/lucide/dist/umd/lucide.js')));
     app.use((req, res) => res.status(404).json({error:'Not found.'}));

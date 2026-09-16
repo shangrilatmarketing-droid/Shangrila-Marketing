@@ -50,6 +50,7 @@ after(async () => {
 test('health and public assets work, private files and source code are inaccessible',async () => {
     assert.equal((await request('/health',{cookie:null})).status,200);
     for (const url of ['/','/login.html','/ui.js','/vendor/lucide.js']) assert.equal((await request(url,{cookie:null})).status,200,url);
+    for (const url of ['/','/app.js','/styles.css']) assert.equal((await request(url,{cookie:null})).headers.get('cache-control'),'no-cache',url);
     for (const url of ['/users.json','/database.json','/budget.json','/.env','/server.js','/store.js','/package.json','/node_modules/bcryptjs/package.json']) assert.equal((await request(url,{cookie:null})).status,404,url);
     assert.equal((await request('/api/plans',{cookie:null})).status,401);
 });

@@ -135,6 +135,87 @@ class GitDeployment(legacy.Deployment):
             self.verify_unrelated()
             raise
 
+    def verified_snapshot(self,value):
+        if not value: raise RuntimeError('Specify the verified backup folder with --snapshot.')
+        folder=Path(value).expanduser().resolve()
+        backup_root=(self.root/'backups').resolve()
+        if backup_root not in folder.parents or not folder.name.startswith('legacy-'):
+            raise RuntimeError('The snapshot must be a legacy backup inside deploy/runtime/backups.')
+        snapshot=folder/'snapshot'; manifest_file=folder/'snapshot-sha256.json'
+        if not snapshot.is_dir() or not manifest_file.is_file(): raise RuntimeError('The backup has no snapshot or checksum manifest.')
+        manifest=json.loads(manifest_file.read_text(encoding='utf-8'))
+        actual={str(path.relative_to(snapshot)).replace('\\','/'):legacy.file_hash(path) for path in snapshot.rglob('*') if path.is_file()}
+        if actual!=manifest: raise RuntimeError('The legacy snapshot files do not match their verified checksum manifest.')
+        return snapshot
+
+    def merge_network(self):
+        networks=self.old.get('NetworkSettings',{}).get('Networks') or {}
+        if len(networks)!=1: raise RuntimeError('Expected one application network before restore.')
+        name=next(iter(networks))
+        info=self.inspect(name)
+        labels=info.get('Labels') or {}
+        if labels.get('com.docker.compose.project')!=self.target.project:
+            raise RuntimeError('The application network does not belong to this deployment.')
+        return name
+
+    def run_merge(self,snapshot,apply=False):
+        args=['run','--rm','--network',self.merge_network(),'--env-file',self.root/'.app.env',
+            '--user','root','--read-only','--cap-drop','ALL','--cap-add','DAC_OVERRIDE',
+            '--security-opt','no-new-privileges:true','--mount','type=bind,source='+str(snapshot)+',target=/migration,readonly',
+            '--entrypoint','/usr/local/bin/node',self.app_image,'scripts/merge-json.js','/migration']
+        if apply: args.append('--apply')
+        result=self.docker(*args)
+        prefix='Merged legacy snapshot: ' if apply else 'Merge preview: '
+        line=next((line for line in result.stdout.splitlines() if line.startswith(prefix)),None)
+        if not line: raise RuntimeError('The legacy merge did not report a verified summary.')
+        return json.loads(line[len(prefix):])
+
+    def verify_merge_counts(self,expected):
+        identifier=self.compose('ps','-q','db').stdout.strip()
+        query='SELECT (SELECT count(*) FROM users),(SELECT count(*) FROM plans),(SELECT count(*) FROM plan_uploads),(SELECT count(*) FROM data_imports)'
+        result=self.docker('exec',identifier,'psql','-U','postgres','-d','plan_reminder','-tA','-v','ON_ERROR_STOP=1','-c',query).stdout.strip()
+        values=list(map(int,result.split('|')))
+        wanted=expected['final']
+        if values!=[wanted['users'],wanted['plans'],wanted['uploads'],1]:
+            raise RuntimeError('Post-restore database counts do not match the transactional merge summary.')
+
+    def restore_legacy(self,snapshot_value):
+        self.check_checkout()
+        state=self.installed()
+        self.check_schema()
+        snapshot=self.verified_snapshot(snapshot_value)
+        self.build_application()
+        preview=self.run_merge(snapshot,False)
+        print('Verified merge preview: '+json.dumps(preview,separators=(',',':')),flush=True)
+        backup=self.backup_database(save_image=True)
+        old_settings=(self.root/'.env.postgres').read_text(encoding='utf-8')
+        previous=dict(state); merged=False
+        try:
+            legacy.private_write(self.state_path,json.dumps({**state,'phase':'restoring-legacy','restore_backup':str(backup)},indent=2)+'\n')
+            summary=self.run_merge(snapshot,True);merged=True
+            self.verify_merge_counts(summary)
+            self.settings['APP_IMAGE']=self.app_image
+            legacy.private_write(self.root/'.env.postgres',legacy.raw_env(self.settings))
+            self.replace_app()
+            changed=self.verify_unrelated()
+            state.update(phase='complete',revision=self.revision,app_image=self.app_image,
+                restored_legacy_snapshot=str(snapshot.parent),legacy_restore=summary,
+                restore_backup=str(backup),other_containers_changed=changed)
+            legacy.private_write(self.state_path,json.dumps(state,indent=2)+'\n')
+            print('DONE. Missing legacy accounts, plans and images were restored; current rows were retained.',flush=True)
+        except BaseException:
+            if merged:
+                print('Legacy data was merged transactionally, but application replacement failed. Restoring the previous app image.',flush=True)
+                legacy.private_write(self.root/'.env.postgres',old_settings);self.settings=read_env(self.root/'.env.postgres')
+                try:self.replace_app()
+                except Exception:print('Automatic app rollback needs attention. The database backup and merged data were retained.',file=sys.stderr,flush=True)
+                previous.update(phase='complete',legacy_restore=summary,restore_backup=str(backup))
+                legacy.private_write(self.state_path,json.dumps(previous,indent=2)+'\n')
+            else:
+                legacy.private_write(self.state_path,json.dumps(previous,indent=2)+'\n')
+            self.verify_unrelated()
+            raise
+
     def prepare_images(self):
         self.build_application()
         for upstream,local in [('postgres:18.6-alpine','plan-reminder-db:18.6'),('dpage/pgadmin4:9.17','plan-reminder-pgadmin:9.17')]:
@@ -243,7 +324,8 @@ class GitDeployment(legacy.Deployment):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=['install','update','recover','status','backup'],nargs='?',default='install')
+    parser.add_argument('action',choices=['install','update','recover','restore-legacy','status','backup'],nargs='?',default='install')
+    parser.add_argument('--snapshot',help='Legacy backup folder under deploy/runtime/backups (restore-legacy only).')
     args=parser.parse_args()
     if args.action=='status':
         state=SOURCE/'deploy/runtime/deployment-state.json'
@@ -258,6 +340,7 @@ def main():
         if args.action=='install': deployment.install()
         elif args.action=='update': deployment.update()
         elif args.action=='recover': deployment.recover()
+        elif args.action=='restore-legacy': deployment.restore_legacy(args.snapshot)
         else:
             deployment.installed()
             deployment.backup_database()

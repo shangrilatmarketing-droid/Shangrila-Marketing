@@ -153,4 +153,31 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(settings['APP_IMAGE'],'new-image')
         self.assertEqual(module.read_env(self.root/'.app.env')['SMTP_PASS'],'literal$#password')
 
+    def test_verified_snapshot_rejects_any_changed_file(self):
+        folder=self.root/'backups/legacy-fixture';snapshot=folder/'snapshot';snapshot.mkdir(parents=True)
+        source=snapshot/'users.json';source.write_text('[]',encoding='utf-8')
+        module.legacy.private_write(folder/'snapshot-sha256.json',json.dumps({'users.json':module.legacy.file_hash(source)}))
+        self.assertEqual(self.app.verified_snapshot(folder),snapshot)
+        source.write_text('[{}]',encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError,'checksum manifest'):self.app.verified_snapshot(folder)
+
+    def test_legacy_restore_backs_up_before_transactional_merge(self):
+        state={'phase':'complete','project':self.app.target.project,'revision':'old','app_image':'old-image'}
+        module.legacy.private_write(self.app.state_path,json.dumps(state))
+        module.legacy.private_write(self.root/'.env.postgres','APP_IMAGE=old-image\nAPP_PORT=3005\n')
+        self.app.settings={'APP_IMAGE':'old-image','APP_PORT':'3005'};self.app.runtime={}
+        events=[];preview={'final':{'users':9,'plans':1,'uploads':3}}
+        self.app.check_checkout=Mock();self.app.installed=Mock(return_value=state);self.app.check_schema=Mock()
+        self.app.verified_snapshot=Mock(return_value=self.root/'snapshot')
+        self.app.build_application=Mock(side_effect=lambda:(events.append('build'),setattr(self.app,'app_image','new-image')))
+        self.app.run_merge=Mock(side_effect=lambda snapshot,apply=False:(events.append('merge' if apply else 'preview') or preview))
+        self.app.backup_database=Mock(side_effect=lambda save_image=False:(events.append('backup') or self.root/'postgres-backup'))
+        self.app.verify_merge_counts=Mock(side_effect=lambda summary:events.append('verify'))
+        self.app.replace_app=Mock(side_effect=lambda:events.append('replace'))
+        self.app.verify_unrelated=Mock(return_value=[])
+        self.app.restore_legacy('fixture')
+        self.assertEqual(events,['build','preview','backup','merge','verify','replace'])
+        self.assertEqual(json.loads(self.app.state_path.read_text())['legacy_restore'],preview)
+        self.assertEqual(module.read_env(self.root/'.env.postgres')['APP_IMAGE'],'new-image')
+
 if __name__=='__main__':unittest.main()

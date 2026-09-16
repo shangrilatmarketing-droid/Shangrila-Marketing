@@ -8,6 +8,7 @@ const bcrypt=require('bcryptjs');
 const {createPostgresStore,revision}=require('../db');
 const {createApplication}=require('../server');
 const {readSnapshot,importSnapshot}=require('../scripts/import-json');
+const {mergeSnapshot}=require('../scripts/merge-json');
 const {testDatabase}=require('./postgres-helper');
 const secret='postgres-integration-secret-at-least-32-characters';
 const plan={id:'legacy-task',title:'Existing campaign',description:'Preserve this',date:'2027-12-20',time:'10:00',company:'SOTC',cost:1200,timeframe:'event',status:'completed',completedAt:123456789,createdBy:'owner@example.test',photoUrl:'/uploads/old.png',repetitionsLeft:0};
@@ -56,6 +57,26 @@ test('PostgreSQL import preserves password hashes, history, order, budgets, remi
     assert.equal(login.status,200);
     const photo=await fetch(url+'/uploads/old.png',{headers:{Cookie:login.headers.get('set-cookie').split(';')[0]}});
     assert.deepEqual(Buffer.from(await photo.arrayBuffer()),png);
+});
+test('guarded merge restores legacy rows while retaining current collisions',async t=>{
+    const {store}=await setup(t), snapshot=readSnapshot(sourceFiles(t));
+    const currentUser={...snapshot.users[0],password:bcrypt.hashSync('Current-password-42',4)};
+    const currentPlan={...snapshot.plans[0],title:'Current version'};
+    await store.write('users',[currentUser,{...currentUser,email:'new@example.test'}]);
+    await store.write('database',[currentPlan]);
+    await store.write('budget',{SOTC:99999});
+    const preview=await mergeSnapshot(store,snapshot);
+    assert.deepEqual(preview.source,{users:1,plans:2,uploads:1});
+    assert.deepEqual(preview.currentBefore,{users:2,plans:1,uploads:0});
+    assert.deepEqual(preview.overlaps,{users:1,plans:1,uploads:0});
+    assert.equal((await store.read('database')).length,1);
+    const applied=await mergeSnapshot(store,snapshot,{apply:true});
+    assert.deepEqual(applied.final,{users:2,plans:2,uploads:1});
+    assert.equal((await store.read('users')).find(user=>user.email===currentUser.email).password,currentUser.password);
+    assert.equal((await store.read('database')).find(plan=>plan.id===currentPlan.id).title,'Current version');
+    assert.equal((await store.read('budget')).SOTC,99999);
+    assert.ok(await store.getUpload('old.png'));
+    await assert.rejects(mergeSnapshot(store,snapshot,{apply:true}),/already recorded/);
 });
 test('failed migration rolls back every collection, and concurrent imports cannot both succeed',async t=>{
     const {store}=await setup(t), snapshot=readSnapshot(sourceFiles(t));

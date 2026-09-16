@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check server.js && node --check db.js && node --check app.js && node --check auth.js && node --check ui.js && node --check domain.js && node --check scripts/import-json.js && node --check scripts/setup-env.js"
+    "check": "node --check server.js && node --check db.js && node --check app.js && node --check auth.js && node --check ui.js && node --check domain.js && node --check scripts/import-json.js && node --check scripts/merge-json.js && node --check scripts/setup-env.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

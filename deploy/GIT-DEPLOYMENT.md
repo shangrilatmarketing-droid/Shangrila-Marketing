@@ -60,6 +60,16 @@ python3 deploy.py update
 
 The updater refuses changed SQL migration files because database schema upgrades require a separate reviewed migration and rollback plan. It also retains the installed infrastructure configuration, so PostgreSQL/pgAdmin upgrades and changes to their deployment settings are deliberate operations. It refuses a dirty Git checkout and concurrent deployments. It does not reset local Git changes, recreate databases, or repeat the JSON import.
 
+## Restore a verified legacy snapshot after an empty import
+
+If the installed PostgreSQL database has no `data_imports` record and is missing the verified JSON data, use `restore-legacy` with the exact backup folder. It validates every snapshot checksum, builds and tests the current image, previews overlaps, saves and validates a PostgreSQL dump plus the previous app image, and then performs one transactional merge. Current users/plans win only when their IDs collide; missing legacy users, plans, budgets, reminders, and images are restored. Conflicting image bytes or a previous import stop the operation without changes.
+
+```bash
+cd ~/Shangrila-Marketing
+git pull --ff-only
+python3 deploy.py restore-legacy --snapshot deploy/runtime/backups/legacy-YYYYMMDD-HHMMSS-xxxxxx
+```
+
 ## Open the server's pgAdmin
 
 On your Windows PC, open PowerShell:

@@ -301,7 +301,9 @@ function editPlan(id = null) {
 }
 $('plan-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (busy || !ready || !$('plan-form').reportValidity()) return;
+    if (busy) return errorToast(new Error('Please wait for the current change to finish.'));
+    if (!ready) return errorToast(new Error('The schedule is not ready. Refresh the page and sign in again.'));
+    if (!$('plan-form').reportValidity()) return errorToast(new Error('Complete the highlighted task fields before saving.'));
     const old = editingId ? plans.find(p => p.id === editingId) : null;
     if (editingId && !old) return errorToast(new Error('This plan no longer exists. Close this form and reload the schedule.'));
     const candidate = {...old, id:old?.id || crypto.randomUUID(), title:$('plan-title').value.trim(), description:$('plan-desc').value.trim(),
