@@ -51,4 +51,6 @@ test('browser currency, escaping and date helpers handle string costs and midnig
     assert.equal(sandbox.testUI.money(-50),'NPR -50.00');
     assert.equal(sandbox.testUI.escape('<script>'), '&lt;script&gt;');
     assert.equal(sandbox.testUI.localNow('Asia/Kathmandu',new Date('2026-09-13T20:00:00Z')).date,'2026-09-14');
+    assert.equal(sandbox.testUI.newId({randomUUID:() => 'native-id'}),'native-id');
+    assert.match(sandbox.testUI.newId({}),/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });

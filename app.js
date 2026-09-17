@@ -306,13 +306,13 @@ $('plan-form').addEventListener('submit', async event => {
     if (!$('plan-form').reportValidity()) return errorToast(new Error('Complete the highlighted task fields before saving.'));
     const old = editingId ? plans.find(p => p.id === editingId) : null;
     if (editingId && !old) return errorToast(new Error('This plan no longer exists. Close this form and reload the schedule.'));
-    const candidate = {...old, id:old?.id || crypto.randomUUID(), title:$('plan-title').value.trim(), description:$('plan-desc').value.trim(),
-        company:$('plan-company').value, timeframe:$('plan-timeframe').value, date:$('plan-date').value,
-        time:$('plan-timeframe').value === 'event' ? $('plan-time').value : '', cost:Number($('plan-cost').value || 0),
-        repetitionsLeft:$('plan-timeframe').value === 'event' ? 0 : $('plan-repetitions').value === '' ? null : Number($('plan-repetitions').value),
-        photoUrl:old?.photoUrl || null, status:old?.status || 'pending'};
-    if (!candidate.title) return errorToast(new Error('Enter a plan title.'));
     try {
+        const candidate = {...old, id:old?.id || UI.newId(), title:$('plan-title').value.trim(), description:$('plan-desc').value.trim(),
+            company:$('plan-company').value, timeframe:$('plan-timeframe').value, date:$('plan-date').value,
+            time:$('plan-timeframe').value === 'event' ? $('plan-time').value : '', cost:Number($('plan-cost').value || 0),
+            repetitionsLeft:$('plan-timeframe').value === 'event' ? 0 : $('plan-repetitions').value === '' ? null : Number($('plan-repetitions').value),
+            photoUrl:old?.photoUrl || null, status:old?.status || 'pending'};
+        if (!candidate.title) throw new Error('Enter a plan title.');
         const file = $('plan-photo').files[0];
         if (file) {
             if (file.size > 5 * 1024 * 1024) throw new Error('Photos must be no larger than 5 MB.');
