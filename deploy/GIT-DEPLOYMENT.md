@@ -113,3 +113,16 @@ docker compose --env-file deploy/runtime/.env.postgres -p plan-reminder-postgres
 ```
 
 References: [Docker service updates](https://docs.docker.com/reference/cli/docker/compose/up/), [PostgreSQL backups](https://www.postgresql.org/docs/18/backup-dump.html).
+
+## Configure Gmail notifications
+
+Create a Google App Password using the same Google account that will send the planner emails. Enter it only at the hidden terminal prompt; do not paste the password into source files, chat, or shell commands.
+
+```bash
+cd ~/Shangrila-Marketing && git pull --ff-only
+python3 configure_email.py --sender your-sender@gmail.com
+```
+
+The helper verifies the installed planner identity, checks Gmail authentication before saving credentials, and recreates only the app using its existing image. It verifies that the new settings reached the running app and restores the prior settings if applying them fails. It does not send an email, build an image, update the database, or recreate PostgreSQL or pgAdmin. After it reports `DONE`, use **Settings > Send test email**; delivery goes to the email address signed into the planner.
+
+Run the script directly in a Linux terminal. It refuses piped or visibly echoed password input. Spaces in Google's grouped App Password are accepted, and incorrect input can be retried. Keep `deploy/runtime/.app.env` private. Google instructions: [Create an App Password](https://support.google.com/accounts/answer/185833).
